@@ -25,7 +25,14 @@ func NewBroker(clientTimeout time.Duration) *Broker {
 }
 
 func (b *Broker) subscribe(topic string, clientChan chan string) {
-	// TODO implement subscribe
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if _, ok := b.client[topic]; ok {
+		b.client[topic] = make(map[chan string]struct{})
+	}
+
+	b.client[topic][clientChan] = struct{}{}
 }
 
 func (b *Broker) unsubscribe(topic string, clientChan chan string) {
