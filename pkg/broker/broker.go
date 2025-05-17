@@ -95,7 +95,7 @@ func (b *Broker) publish(topic string, message []byte) {
 	}
 }
 
-func (b *Broker) ServeHttp(w http.ResponseWriter, r *http.Request) {
+func (b *Broker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	if len(pathParts) < 2 || pathParts[0] != "infocenter" {
 		http.Error(w, "Not Found: Expected path /infocenter/{topic}", http.StatusNotFound)

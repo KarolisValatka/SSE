@@ -1,43 +1,43 @@
 package main
 
 import (
-	"fmt"
+	"errors"
+	"github.com/KarolisValatka/Aardvark/pkg/broker"
+	"log"
 	"net/http"
 	"time"
 )
 
+const defaultClientTimeout = 30 * time.Second
+
 func main() {
 
-	http.HandleFunc("/events", sseHandler)
+	infoCenterBroker := broker.NewBroker(defaultClientTimeout)
 
-	if err := http.ListenAndServe(":8080", nil); err != nil {
-		panic(err)
+	mux := http.NewServeMux()
+
+	mux.Handle("/infocenter/", infoCenterBroker)
+
+	port := "8080"
+	log.Printf("Starting SSE server on port :%s", port)
+	log.Printf("Endpoints:")
+	log.Printf("  POST /infocenter/{topic}  - Send a message to a topic.")
+	log.Printf("  GET  /infocenter/{topic}  - Subscribe to messages from a topic (SSE).")
+	log.Printf("Client inactivity timeout is set to %v.", defaultClientTimeout)
+
+	server := &http.Server{
+		Addr:         ":" + port,
+		Handler:      mux,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: defaultClientTimeout + 10*time.Second,
+		IdleTimeout:  120 * time.Second,
 	}
-}
 
-func sseHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	// This for local only
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-
-	memT := time.NewTicker(time.Second)
-	defer memT.Stop()
-
-	clientGone := r.Context().Done()
-
-	rc := http.NewResponseController(w)
-	for {
-		select {
-		case <-memT.C:
-		case <-clientGone:
-			fmt.Printf("client died")
-			err := rc.Flush()
-			if err != nil {
-				fmt.Print("I died flushing")
-			}
+	if err := server.ListenAndServe(); err != nil {
+		if !errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("Http server error: %v", err)
+		} else {
+			log.Println("Http server shutdown gracefully")
 		}
 	}
 }
