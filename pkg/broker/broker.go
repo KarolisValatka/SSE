@@ -43,7 +43,7 @@ func (b *Broker) subscribe(topic string, clientChan chan string) {
 
 func (b *Broker) unsubscribe(topic string, clientChan chan string) {
 	b.mu.Lock()
-	b.mu.Unlock()
+	defer b.mu.Unlock()
 
 	if chans, ok := b.client[topic]; ok {
 		if _, clientOk := chans[clientChan]; clientOk {
