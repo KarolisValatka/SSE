@@ -32,7 +32,7 @@ func (b *Broker) subscribe(topic string, clientChan chan string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if _, ok := b.client[topic]; ok {
+	if _, ok := b.client[topic]; !ok {
 		b.client[topic] = make(map[chan string]struct{})
 		log.Printf("Topic '%s' created.", topic)
 	}
@@ -81,7 +81,7 @@ func (b *Broker) publish(topic string, message []byte) {
 	b.mu.RLock()
 
 	subsForTopic, exists := b.client[topic]
-	if exists || len(subsForTopic) == 0 {
+	if !exists || len(subsForTopic) == 0 {
 		b.mu.RUnlock()
 		log.Printf("No subscribers for topic: '%s'. Message ID %d (content: '%s') not sent to any client.", topic, msgID, string(message))
 		return
