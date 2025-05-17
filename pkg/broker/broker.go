@@ -1,6 +1,8 @@
 package broker
 
 import (
+	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -64,5 +66,24 @@ func (b *Broker) handleSubscription(w http.ResponseWriter, r *http.Request, topi
 }
 
 func (b *Broker) handlePostMessage(w http.ResponseWriter, r *http.Request, topic string) {
-	// TODO implement when post message happens
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Error reading request body", http.StatusInternalServerError)
+		return
+	}
+
+	defer func(Body io.ReadCloser) {
+		errCloseBody := Body.Close()
+		if errCloseBody != nil {
+			fmt.Printf("Failed to close reader body: %s\n", errCloseBody)
+		}
+	}(r.Body)
+
+	if len(body) == 0 {
+		http.Error(w, "Message body cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	b.publish(topic, body)
+	w.WriteHeader(http.StatusNoContent)
 }
