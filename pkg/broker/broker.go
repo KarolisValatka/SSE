@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -55,7 +56,43 @@ func (b *Broker) unsubscribe(topic string, clientChan chan string) {
 }
 
 func (b *Broker) publish(topic string, message []byte) {
-	// TODO implement publish
+	msgID := b.messageID.Add(1)
+
+	var sseMessage bytes.Buffer
+	sseMessage.WriteString(fmt.Sprintf("id: %d\n", msgID))
+	sseMessage.WriteString("event: msg\n")
+
+	sanitizeBody := bytes.ReplaceAll(message, []byte("\r\n"), []byte("\n"))
+	lines := strings.Split(string(sanitizeBody), "\n")
+
+	for _, line := range lines {
+		sseMessage.WriteString(fmt.Sprintf("data: %s\n", line))
+	}
+	sseMessage.WriteString("\n")
+
+	formattedMsgString := sseMessage.String()
+
+	b.mu.Lock()
+
+	subsForTopic, exists := b.client[topic]
+	if exists || len(subsForTopic) == 0 {
+		b.mu.Unlock()
+		return
+	}
+
+	tempChan := make([]chan string, 0, len(subsForTopic))
+	for ch := range subsForTopic {
+		tempChan = append(tempChan, ch)
+	}
+
+	b.mu.Unlock()
+
+	for _, ch := range tempChan {
+		select {
+		case ch <- formattedMsgString:
+		default:
+		}
+	}
 }
 
 func (b *Broker) ServeHttp(w http.ResponseWriter, r *http.Request) {
