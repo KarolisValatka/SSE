@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -58,7 +59,26 @@ func (b *Broker) publish(topic string, message []byte) {
 }
 
 func (b *Broker) ServeHttp(w http.ResponseWriter, r *http.Request) {
-	// TODO implement serve for http server
+	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(pathParts) < 2 || pathParts[0] != "infocenter" {
+		http.Error(w, "Not Found: Expected path /infocenter/{topic}", http.StatusNotFound)
+		return
+	}
+
+	topic := pathParts[1]
+	if topic == "" {
+		http.Error(w, "Bad Request: Topic cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		b.handleSubscription(w, r, topic)
+	case http.MethodPost:
+		b.handlePostMessage(w, r, topic)
+	default:
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+	}
 }
 
 func (b *Broker) handleSubscription(w http.ResponseWriter, r *http.Request, topic string) {
