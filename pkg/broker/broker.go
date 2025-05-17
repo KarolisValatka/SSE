@@ -12,7 +12,7 @@ import (
 )
 
 // Default time
-const defaultClientTimeout = 30 * time.Second
+const messageChannelBuffer = 10
 
 type Broker struct {
 	client    map[string]map[chan string]struct{}
@@ -119,7 +119,79 @@ func (b *Broker) ServeHttp(w http.ResponseWriter, r *http.Request) {
 }
 
 func (b *Broker) handleSubscription(w http.ResponseWriter, r *http.Request, topic string) {
-	// TODO implement handle subscription method
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	clientChan := make(chan string, messageChannelBuffer)
+	b.subscribe(topic, clientChan)
+
+	defer b.unsubscribe(topic, clientChan)
+
+	flusher.Flush()
+
+	ctx := r.Context()
+	timer := time.NewTimer(b.timeout)
+	startTime := time.Now()
+
+	for {
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return
+		case msg, open := <-clientChan:
+			if !open {
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				return
+			}
+			if _, err := fmt.Fprint(w, msg); err != nil {
+				if !timer.Stop() {
+					select {
+					case <-timer.C:
+					default:
+					}
+				}
+				return
+			}
+
+			flusher.Flush()
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(b.timeout)
+
+		case <-timer.C:
+			durationConnected := time.Since(startTime)
+			timeoutEvent := fmt.Sprintf("event: timeout\ndata: %0.fs\n\n", durationConnected.Seconds())
+
+			if _, err := fmt.Fprint(w, timeoutEvent); err != nil {
+				// Hmmmm
+			}
+
+			flusher.Flush()
+
+			return
+		}
+	}
 }
 
 func (b *Broker) handlePostMessage(w http.ResponseWriter, r *http.Request, topic string) {
