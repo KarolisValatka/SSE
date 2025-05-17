@@ -36,7 +36,19 @@ func (b *Broker) subscribe(topic string, clientChan chan string) {
 }
 
 func (b *Broker) unsubscribe(topic string, clientChan chan string) {
-	// TODO implement unsubscribe
+	b.mu.Lock()
+	b.mu.Unlock()
+
+	if chans, ok := b.client[topic]; ok {
+		if _, clientOk := chans[clientChan]; clientOk {
+			delete(chans, clientChan)
+			close(clientChan)
+
+			if len(chans) == 0 {
+				delete(b.client, topic)
+			}
+		}
+	}
 }
 
 func (b *Broker) publish(topic string, message []byte) {
