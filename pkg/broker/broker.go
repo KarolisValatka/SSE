@@ -3,6 +3,7 @@ package broker
 import (
 	"bytes"
 	"fmt"
+	"github.com/KarolisValatka/Aardvark/internal/utils"
 	"io"
 	"log"
 	"net/http"
@@ -12,19 +13,70 @@ import (
 	"time"
 )
 
-const messageChannelBuffer = 10
+const maxLongLength = 50
 
 type Broker struct {
-	client    map[string]map[chan string]struct{}
-	mu        sync.RWMutex
-	messageID atomic.Uint64
-	timeout   time.Duration
+	client           map[string]map[chan string]struct{}
+	mu               sync.RWMutex
+	messageID        atomic.Uint64
+	timeout          time.Duration
+	maxMsgSize       int64
+	buffSize         int
+	maxTopicNameSize int
 }
 
-func NewBroker(clientTimeout time.Duration) *Broker {
+type Options func(broker *Broker)
+
+func WithBufferSize(size int) Options {
+	return func(b *Broker) {
+		b.buffSize = size
+	}
+}
+
+func WithTimeout(duration time.Duration) Options {
+	return func(b *Broker) {
+		b.timeout = duration * time.Second
+	}
+}
+
+func WithMaxTopicSize(size int) Options {
+	return func(b *Broker) {
+		b.maxTopicNameSize = size
+	}
+}
+
+func WithMaxMsgSize(size int64) Options {
+	return func(b *Broker) {
+		b.maxMsgSize = size
+	}
+}
+
+func NewBrokerWithOptions(opts ...Options) *Broker {
+	cfg := utils.NewDefaultConfig()
+	broker := &Broker{
+		client:           make(map[string]map[chan string]struct{}),
+		timeout:          cfg.ClientTimeout,
+		buffSize:         cfg.MessageBufferSize,
+		maxTopicNameSize: cfg.MaxTopicNameLength,
+		maxMsgSize:       cfg.MaxMessageSizeBytes,
+	}
+
+	for _, opt := range opts {
+		opt(broker)
+	}
+
+	return broker
+}
+
+func NewBrokerFromEnv() *Broker {
+	cfg := utils.NewConfigFromEnv()
+
 	return &Broker{
-		client:  make(map[string]map[chan string]struct{}),
-		timeout: clientTimeout,
+		client:           make(map[string]map[chan string]struct{}),
+		timeout:          cfg.ClientTimeout,
+		buffSize:         cfg.MessageBufferSize,
+		maxTopicNameSize: cfg.MaxTopicNameLength,
+		maxMsgSize:       cfg.MaxMessageSizeBytes,
 	}
 }
 
@@ -34,7 +86,7 @@ func (b *Broker) subscribe(topic string, clientChan chan string) {
 
 	if _, ok := b.client[topic]; !ok {
 		b.client[topic] = make(map[chan string]struct{})
-		log.Printf("Topic '%s' created.", topic)
+		log.Printf("Topic '%s' created", topic)
 	}
 
 	b.client[topic][clientChan] = struct{}{}
@@ -49,11 +101,11 @@ func (b *Broker) unsubscribe(topic string, clientChan chan string) {
 		if _, clientOk := chans[clientChan]; clientOk {
 			delete(chans, clientChan)
 			close(clientChan)
-			log.Printf("Client unsubscribed from topic: %s.", topic)
+			log.Printf("Client unsubscribed from topic: %s", topic)
 
 			if len(chans) == 0 {
 				delete(b.client, topic)
-				log.Printf("Topic '%s' removed as no cleints are subscriber.", topic)
+				log.Printf("Topic '%s' removed as no cleints are subscribed", topic)
 			} else {
 				log.Printf("Total subscribers for topic '%s' remaining: %d", topic, len(chans))
 			}
@@ -61,7 +113,7 @@ func (b *Broker) unsubscribe(topic string, clientChan chan string) {
 	}
 }
 
-func (b *Broker) publish(topic string, message []byte) {
+func (b *Broker) publish(topic string, message []byte) uint64 {
 	msgID := b.messageID.Add(1)
 
 	var sseMessage bytes.Buffer
@@ -83,8 +135,8 @@ func (b *Broker) publish(topic string, message []byte) {
 	subsForTopic, exists := b.client[topic]
 	if !exists || len(subsForTopic) == 0 {
 		b.mu.RUnlock()
-		log.Printf("No subscribers for topic: '%s'. Message ID %d (content: '%s') not sent to any client.", topic, msgID, string(message))
-		return
+		log.Printf("No subscribers for topic: '%s'. Message ID %d (content: '%s') not sent to any client", topic, msgID, truncateMessage(string(message)))
+		return msgID
 	}
 
 	tempChan := make([]chan string, 0, len(subsForTopic))
@@ -93,15 +145,17 @@ func (b *Broker) publish(topic string, message []byte) {
 	}
 
 	b.mu.RUnlock()
-	log.Printf("Publishing message ID %d to %d subscribers on topic '%s'.", msgID, len(tempChan), topic)
+	log.Printf("Publishing message ID %d to %d subscribers on topic '%s'", msgID, len(tempChan), topic)
 
 	for _, ch := range tempChan {
 		select {
 		case ch <- formattedMsgString:
 		default:
-			log.Printf("Client channel for topic '%s' is full or closed. Message ID %d dropped for this client.", topic, msgID)
+			log.Printf("Client channel for topic '%s' is full or closed. Message ID %d dropped for this client", topic, msgID)
 		}
 	}
+
+	return msgID
 }
 
 func (b *Broker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -114,6 +168,11 @@ func (b *Broker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	topic := pathParts[1]
 	if topic == "" {
 		http.Error(w, "Bad Request: Topic cannot be empty", http.StatusBadRequest)
+		return
+	}
+
+	if len(topic) > b.maxTopicNameSize {
+		http.Error(w, fmt.Sprintf("Bad Request: Topic name too long (max %d characters)", b.maxTopicNameSize), http.StatusBadRequest)
 		return
 	}
 
@@ -138,7 +197,7 @@ func (b *Broker) handleSubscription(w http.ResponseWriter, r *http.Request, topi
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	clientChan := make(chan string, messageChannelBuffer)
+	clientChan := make(chan string, b.buffSize)
 	b.subscribe(topic, clientChan)
 
 	defer b.unsubscribe(topic, clientChan)
@@ -147,71 +206,53 @@ func (b *Broker) handleSubscription(w http.ResponseWriter, r *http.Request, topi
 
 	ctx := r.Context()
 	timer := time.NewTimer(b.timeout)
+	defer timer.Stop()
+
 	startTime := time.Now()
 
-	log.Printf("Client connected to topic: '%s'. Timeout set to %v.", topic, b.timeout)
+	log.Printf("Client connected to topic: '%s'. Timeout set to %v", topic, b.timeout)
 	for {
 		select {
 		case <-ctx.Done():
-			log.Printf("Client for topic '%s' disconnected (context done).", topic)
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
-			}
+			log.Printf("Client for topic '%s' disconnected (context done)", topic)
 			return
 		case msg, open := <-clientChan:
 			if !open {
-				log.Printf("Client channel for topic '%s' closed by broker.", topic)
-				if !timer.Stop() {
-					select {
-					case <-timer.C:
-					default:
-					}
-				}
+				log.Printf("Client channel for topic '%s' closed by broker", topic)
 				return
 			}
+
 			if _, err := fmt.Fprint(w, msg); err != nil {
-				log.Printf("Error writing to client for topic '%s': %v. Disconnecting.", topic, err)
-				if !timer.Stop() {
-					select {
-					case <-timer.C:
-					default:
-					}
-				}
+				log.Printf("Error writing to client for topic '%s': %v. Disconnecting", topic, err)
 				return
 			}
 
 			flusher.Flush()
+
 			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
+				<-timer.C
 			}
 			timer.Reset(b.timeout)
 
 		case <-timer.C:
 			durationConnected := time.Since(startTime)
 			timeoutEvent := fmt.Sprintf("event: timeout\ndata: %0.fs\n\n", durationConnected.Seconds())
-			log.Printf("Client for topic '%s' timed out after %s. Sending timeout event.", topic, durationConnected.String())
+			log.Printf("Client for topic '%s' timed out after %s. Sending timeout event", topic, durationConnected.String())
 
 			if _, err := fmt.Fprint(w, timeoutEvent); err != nil {
 				log.Printf("Error sending timeout event to client for topic '%s' : %v", topic, err)
 			}
 
 			flusher.Flush()
-
 			return
 		}
 	}
 }
 
 func (b *Broker) handlePostMessage(w http.ResponseWriter, r *http.Request, topic string) {
-	body, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(io.LimitReader(r.Body, b.maxMsgSize))
 	if err != nil {
-		log.Printf("Error reading request boyd for topic '%s' : %v", topic, err)
+		log.Printf("Error reading request body for topic '%s' : %v", topic, err)
 		http.Error(w, "Error reading request body", http.StatusInternalServerError)
 		return
 	}
@@ -228,8 +269,15 @@ func (b *Broker) handlePostMessage(w http.ResponseWriter, r *http.Request, topic
 		return
 	}
 
-	b.publish(topic, body)
-	log.Printf("Message (lenght %d) posted to topic '%s.'", len(body), topic)
+	msgID := b.publish(topic, body)
+	log.Printf("Message (lenght %d) posted to topic '%s' with ID %d", len(body), topic, msgID)
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func truncateMessage(msg string) string {
+	if len(msg) <= maxLongLength {
+		return msg
+	}
+	return msg[:maxLongLength] + "..."
 }
