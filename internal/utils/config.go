@@ -3,10 +3,11 @@ package utils
 import (
 	"os"
 	"strconv"
+	"time"
 )
 
 type Config struct {
-	Port                string
+	ClientTimeout       time.Duration
 	MessageBufferSize   int
 	MaxTopicNameLength  int
 	MaxMessageSizeBytes int64
@@ -14,7 +15,7 @@ type Config struct {
 
 func NewDefaultConfig() *Config {
 	return &Config{
-		Port:                "8080",
+		ClientTimeout:       30 * time.Second,
 		MessageBufferSize:   10,
 		MaxTopicNameLength:  100,
 		MaxMessageSizeBytes: 1024 * 1024,
@@ -24,8 +25,10 @@ func NewDefaultConfig() *Config {
 func NewConfigFromEnv() *Config {
 	config := NewDefaultConfig()
 
-	if port := os.Getenv("PORT"); port != "" {
-		config.Port = port
+	if timeout := os.Getenv("CLIENT_TIMEOUT_IN_SECONDS"); timeout != "" {
+		if parsed, err := time.ParseDuration(timeout); err == nil && parsed.Seconds() > 0.0 {
+			config.ClientTimeout = parsed
+		}
 	}
 
 	if buffSize := os.Getenv("MESSAGE_BUFFER_SIZE"); buffSize != "" {

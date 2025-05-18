@@ -3,6 +3,7 @@ package broker
 import (
 	"bytes"
 	"fmt"
+	"github.com/KarolisValatka/Aardvark/internal/utils"
 	"io"
 	"log"
 	"net/http"
@@ -12,18 +13,16 @@ import (
 	"time"
 )
 
-const (
-	messageChannelBuffer      = 10
-	defaultMaxTopicNameLength = 100
-	maxLongLength             = 50
-)
+const maxLongLength = 50
 
 type Broker struct {
-	client    map[string]map[chan string]struct{}
-	mu        sync.RWMutex
-	messageID atomic.Uint64
-	timeout   time.Duration
-	buffSize  int
+	client           map[string]map[chan string]struct{}
+	mu               sync.RWMutex
+	messageID        atomic.Uint64
+	timeout          time.Duration
+	maxMsgSize       int64
+	buffSize         int
+	maxTopicNameSize int
 }
 
 type Options func(broker *Broker)
@@ -34,11 +33,32 @@ func WithBufferSize(size int) Options {
 	}
 }
 
-func NewBroker(clientTimeout time.Duration, opts ...Options) *Broker {
+func WithTimeout(duration time.Duration) Options {
+	return func(b *Broker) {
+		b.timeout = duration * time.Second
+	}
+}
+
+func WithMaxTopicSize(size int) Options {
+	return func(b *Broker) {
+		b.maxTopicNameSize = size
+	}
+}
+
+func WithMaxMsgSize(size int64) Options {
+	return func(b *Broker) {
+		b.maxMsgSize = size
+	}
+}
+
+func NewBrokerWithOptions(opts ...Options) *Broker {
+	cfg := utils.NewDefaultConfig()
 	broker := &Broker{
-		client:   make(map[string]map[chan string]struct{}),
-		timeout:  clientTimeout,
-		buffSize: messageChannelBuffer,
+		client:           make(map[string]map[chan string]struct{}),
+		timeout:          cfg.ClientTimeout,
+		buffSize:         cfg.MessageBufferSize,
+		maxTopicNameSize: cfg.MaxTopicNameLength,
+		maxMsgSize:       cfg.MaxMessageSizeBytes,
 	}
 
 	for _, opt := range opts {
@@ -46,6 +66,18 @@ func NewBroker(clientTimeout time.Duration, opts ...Options) *Broker {
 	}
 
 	return broker
+}
+
+func NewBrokerFromEnv() *Broker {
+	cfg := utils.NewConfigFromEnv()
+
+	return &Broker{
+		client:           make(map[string]map[chan string]struct{}),
+		timeout:          cfg.ClientTimeout,
+		buffSize:         cfg.MessageBufferSize,
+		maxTopicNameSize: cfg.MaxTopicNameLength,
+		maxMsgSize:       cfg.MaxMessageSizeBytes,
+	}
 }
 
 func (b *Broker) subscribe(topic string, clientChan chan string) {
@@ -139,8 +171,8 @@ func (b *Broker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(topic) > defaultMaxTopicNameLength {
-		http.Error(w, fmt.Sprintf("Bad Request: Topic name too long (max %d characters)", defaultMaxTopicNameLength), http.StatusBadRequest)
+	if len(topic) > b.maxTopicNameSize {
+		http.Error(w, fmt.Sprintf("Bad Request: Topic name too long (max %d characters)", b.maxTopicNameSize), http.StatusBadRequest)
 		return
 	}
 
@@ -218,7 +250,7 @@ func (b *Broker) handleSubscription(w http.ResponseWriter, r *http.Request, topi
 }
 
 func (b *Broker) handlePostMessage(w http.ResponseWriter, r *http.Request, topic string) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1024*1024))
+	body, err := io.ReadAll(io.LimitReader(r.Body, b.maxMsgSize))
 	if err != nil {
 		log.Printf("Error reading request body for topic '%s' : %v", topic, err)
 		http.Error(w, "Error reading request body", http.StatusInternalServerError)

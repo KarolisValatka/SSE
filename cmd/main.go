@@ -12,13 +12,19 @@ const defaultClientTimeout = 30 * time.Second
 
 func main() {
 
-	infoCenterBroker := broker.NewBroker(defaultClientTimeout)
+	infoCenterBroker := broker.NewBrokerWithOptions(
+		broker.WithTimeout(30),
+		broker.WithBufferSize(10),
+		broker.WithMaxTopicSize(50),
+		broker.WithMaxMsgSize(1024*1024),
+	)
 
 	mux := http.NewServeMux()
 
 	mux.Handle("/infocenter/", infoCenterBroker)
 
 	port := "8080"
+
 	log.Printf("Starting SSE server on port :%s", port)
 	log.Printf("Endpoints:")
 	log.Printf("  POST /infocenter/{topic}  - Send a message to a topic.")
