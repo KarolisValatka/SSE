@@ -11,6 +11,7 @@ type Config struct {
 	MessageBufferSize   int
 	MaxTopicNameLength  int
 	MaxMessageSizeBytes int64
+	RetryInterval       time.Duration
 }
 
 func NewDefaultConfig() *Config {
@@ -19,6 +20,7 @@ func NewDefaultConfig() *Config {
 		MessageBufferSize:   10,
 		MaxTopicNameLength:  100,
 		MaxMessageSizeBytes: 1024 * 1024,
+		RetryInterval:       3 * time.Second,
 	}
 }
 
@@ -46,6 +48,12 @@ func NewConfigFromEnv() *Config {
 	if maxMessageSize := os.Getenv("MAX_MESSAGE_SIZE_BYTES"); maxMessageSize != "" {
 		if parsed, err := strconv.ParseInt(maxMessageSize, 10, 64); err == nil && parsed > 0 {
 			config.MaxMessageSizeBytes = parsed
+		}
+	}
+
+	if retryInterval := os.Getenv("RETRY_INTERVAL_IN_SECONDS"); retryInterval != "" {
+		if parsed, err := strconv.ParseInt(retryInterval, 10, 64); err == nil && parsed > 0 {
+			config.RetryInterval = time.Duration(parsed) * time.Second
 		}
 	}
 

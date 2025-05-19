@@ -3,7 +3,6 @@ package broker
 import (
 	"bytes"
 	"fmt"
-	"github.com/KarolisValatka/Aardvark/internal/utils"
 	"io"
 	"log"
 	"net/http"
@@ -11,6 +10,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/KarolisValatka/Aardvark/internal/utils"
 )
 
 const maxLongLength = 50
@@ -23,6 +24,7 @@ type Broker struct {
 	maxMsgSize       int64
 	buffSize         int
 	maxTopicNameSize int
+	retryInterval    time.Duration
 }
 
 type Options func(broker *Broker)
@@ -51,6 +53,12 @@ func WithMaxMsgSize(size int64) Options {
 	}
 }
 
+func WithRetryInterval(duration time.Duration) Options {
+	return func(b *Broker) {
+		b.retryInterval = duration
+	}
+}
+
 func NewBrokerWithOptions(opts ...Options) *Broker {
 	cfg := utils.NewDefaultConfig()
 	broker := &Broker{
@@ -59,6 +67,7 @@ func NewBrokerWithOptions(opts ...Options) *Broker {
 		buffSize:         cfg.MessageBufferSize,
 		maxTopicNameSize: cfg.MaxTopicNameLength,
 		maxMsgSize:       cfg.MaxMessageSizeBytes,
+		retryInterval:    cfg.RetryInterval,
 	}
 
 	for _, opt := range opts {
@@ -77,6 +86,7 @@ func NewBrokerFromEnv() *Broker {
 		buffSize:         cfg.MessageBufferSize,
 		maxTopicNameSize: cfg.MaxTopicNameLength,
 		maxMsgSize:       cfg.MaxMessageSizeBytes,
+		retryInterval:    cfg.RetryInterval,
 	}
 }
 
@@ -114,6 +124,12 @@ func (b *Broker) unsubscribe(topic string, clientChan chan string) {
 }
 
 func (b *Broker) publish(topic string, message []byte) uint64 {
+	// Check message size
+	if int64(len(message)) > b.maxMsgSize {
+		log.Printf("Message size %d exceeds maximum allowed size %d", len(message), b.maxMsgSize)
+		return 0
+	}
+
 	msgID := b.messageID.Add(1)
 
 	var sseMessage bytes.Buffer
@@ -193,9 +209,19 @@ func (b *Broker) handleSubscription(w http.ResponseWriter, r *http.Request, topi
 		return
 	}
 
+	// Get Last-Event-ID if present
+	lastEventID := r.Header.Get("Last-Event-ID")
+	if lastEventID != "" {
+		log.Printf("Client reconnected with Last-Event-ID: %s", lastEventID)
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+
+	// Set retry interval (in milliseconds)
+	fmt.Fprintf(w, "retry: %d\n\n", b.retryInterval.Milliseconds())
+	flusher.Flush()
 
 	clientChan := make(chan string, b.buffSize)
 	b.subscribe(topic, clientChan)
