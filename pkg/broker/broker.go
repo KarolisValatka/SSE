@@ -124,7 +124,6 @@ func (b *Broker) unsubscribe(topic string, clientChan chan string) {
 }
 
 func (b *Broker) publish(topic string, message []byte) uint64 {
-	// Check message size
 	if int64(len(message)) > b.maxMsgSize {
 		log.Printf("Message size %d exceeds maximum allowed size %d", len(message), b.maxMsgSize)
 		return 0
@@ -209,7 +208,6 @@ func (b *Broker) handleSubscription(w http.ResponseWriter, r *http.Request, topi
 		return
 	}
 
-	// Get Last-Event-ID if present
 	lastEventID := r.Header.Get("Last-Event-ID")
 	if lastEventID != "" {
 		log.Printf("Client reconnected with Last-Event-ID: %s", lastEventID)
@@ -219,7 +217,6 @@ func (b *Broker) handleSubscription(w http.ResponseWriter, r *http.Request, topi
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	// Set retry interval (in milliseconds)
 	fmt.Fprintf(w, "retry: %d\n\n", b.retryInterval.Milliseconds())
 	flusher.Flush()
 

@@ -292,52 +292,42 @@ func TestBrokerTopicNameSizeLimit(t *testing.T) {
 	})
 }
 
-func TestBroker_LastEventID(t *testing.T) {
+func TestBrokerLastEventID(t *testing.T) {
 	broker := NewBrokerWithOptions()
 	topic := "test-topic"
 	lastEventID := "123"
 
-	// Create a test request with Last-Event-ID header
 	req := httptest.NewRequest("GET", "/subscribe/"+topic, nil)
 	req.Header.Set("Last-Event-ID", lastEventID)
 
-	// Create a response recorder
 	w := httptest.NewRecorder()
 
-	// Start subscription in a goroutine
 	go broker.handleSubscription(w, req, topic)
 
-	// Give some time for the subscription to be processed
 	time.Sleep(100 * time.Millisecond)
 
-	// Verify the response contains the retry field
 	response := w.Body.String()
 	if !strings.Contains(response, "retry:") {
 		t.Error("Expected response to contain retry field")
 	}
 }
 
-func TestBroker_RetryField(t *testing.T) {
+func TestBrokerRetryField(t *testing.T) {
 	broker := NewBrokerWithOptions()
 	topic := "test-topic"
 
-	// Create a test request
 	req := httptest.NewRequest("GET", "/subscribe/"+topic, nil)
 	w := httptest.NewRecorder()
 
-	// Start subscription in a goroutine
 	go broker.handleSubscription(w, req, topic)
 
-	// Give some time for the subscription to be processed
 	time.Sleep(100 * time.Millisecond)
 
-	// Verify the response contains the retry field
 	response := w.Body.String()
 	if !strings.Contains(response, "retry:") {
 		t.Error("Expected response to contain retry field")
 	}
-
-	// Verify the retry value is in milliseconds
+	
 	retryMatch := regexp.MustCompile(`retry: (\d+)`).FindStringSubmatch(response)
 	if len(retryMatch) != 2 {
 		t.Error("Expected to find retry value in response")
