@@ -28,8 +28,8 @@ func NewConfigFromEnv() *Config {
 	config := NewDefaultConfig()
 
 	if timeout := os.Getenv("CLIENT_TIMEOUT_IN_SECONDS"); timeout != "" {
-		if parsed, err := time.ParseDuration(timeout); err == nil && parsed.Seconds() > 0.0 {
-			config.ClientTimeout = parsed
+		if parsed, err := strconv.ParseInt(timeout, 10, 64); err == nil && parsed > 0 {
+			config.ClientTimeout = time.Duration(parsed) * time.Second
 		}
 	}
 
