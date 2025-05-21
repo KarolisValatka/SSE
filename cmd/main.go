@@ -13,10 +13,11 @@ const defaultClientTimeout = 30 * time.Second
 func main() {
 
 	infoCenterBroker := broker.NewBrokerWithOptions(
-		broker.WithTimeout(30),
+		broker.WithTimeout(defaultClientTimeout),
 		broker.WithBufferSize(10),
 		broker.WithMaxTopicSize(50),
 		broker.WithMaxMsgSize(1024*1024),
+		broker.WithRetryInterval(10),
 	)
 
 	mux := http.NewServeMux()
@@ -32,11 +33,8 @@ func main() {
 	log.Printf("Client inactivity timeout is set to %v.", defaultClientTimeout)
 
 	server := &http.Server{
-		Addr:         ":" + port,
-		Handler:      mux,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: defaultClientTimeout + 10*time.Second,
-		IdleTimeout:  120 * time.Second,
+		Addr:    ":" + port,
+		Handler: mux,
 	}
 
 	if err := server.ListenAndServe(); err != nil {
