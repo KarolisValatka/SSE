@@ -1,4 +1,4 @@
-# Aardvark - Server-Sent Events (SSE) Broker
+# Server-Sent Events (SSE) Broker
 
 You can create broker with either env variables, or programmatically
 
