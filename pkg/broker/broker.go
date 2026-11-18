@@ -1,3 +1,7 @@
+// Package broker is an in memory publish and subscribe broker over server-sent events.
+// Each topic keeps a set of subscriber channels; a published message is formatted once
+// as an SSE event and offered to every subscriber, and a subscriber whose buffer is full
+// misses it rather than slowing the others.
 package broker
 
 import (
@@ -14,8 +18,11 @@ import (
 	"github.com/KarolisValatka/Aardvark/internal/utils"
 )
 
+// maxLongLength is how much of a message the logs show.
 const maxLongLength = 50
 
+// Broker holds the subscribers per topic, the message counter and the limits. It is safe
+// for concurrent use.
 type Broker struct {
 	client           map[string]map[chan string]struct{}
 	mu               sync.RWMutex
@@ -27,38 +34,46 @@ type Broker struct {
 	retryInterval    time.Duration
 }
 
+// Options changes one setting of a new Broker.
 type Options func(broker *Broker)
 
+// WithBufferSize sets how many messages a slow subscriber may fall behind.
 func WithBufferSize(size int) Options {
 	return func(b *Broker) {
 		b.buffSize = size
 	}
 }
 
+// WithTimeout sets how long a quiet subscriber stays connected. It multiplies the value
+// by time.Second, so it expects a plain number of seconds, not a Duration.
 func WithTimeout(duration time.Duration) Options {
 	return func(b *Broker) {
 		b.timeout = duration * time.Second
 	}
 }
 
+// WithMaxTopicSize sets the longest topic name.
 func WithMaxTopicSize(size int) Options {
 	return func(b *Broker) {
 		b.maxTopicNameSize = size
 	}
 }
 
+// WithMaxMsgSize sets the largest message in bytes.
 func WithMaxMsgSize(size int64) Options {
 	return func(b *Broker) {
 		b.maxMsgSize = size
 	}
 }
 
+// WithRetryInterval sets the reconnect hint sent to clients.
 func WithRetryInterval(duration time.Duration) Options {
 	return func(b *Broker) {
 		b.retryInterval = duration
 	}
 }
 
+// NewBrokerWithOptions is a broker with the default settings changed by the options.
 func NewBrokerWithOptions(opts ...Options) *Broker {
 	cfg := utils.NewDefaultConfig()
 	broker := &Broker{
@@ -77,6 +92,7 @@ func NewBrokerWithOptions(opts ...Options) *Broker {
 	return broker
 }
 
+// NewBrokerFromEnv is a broker with settings from the environment.
 func NewBrokerFromEnv() *Broker {
 	cfg := utils.NewConfigFromEnv()
 
@@ -90,6 +106,7 @@ func NewBrokerFromEnv() *Broker {
 	}
 }
 
+// subscribe adds a client channel to a topic, creating the topic.
 func (b *Broker) subscribe(topic string, clientChan chan string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -103,6 +120,8 @@ func (b *Broker) subscribe(topic string, clientChan chan string) {
 	log.Printf("Client subscribed to topic: %s. Total subscribers for topic: %d", topic, len(b.client[topic]))
 }
 
+// unsubscribe removes and closes a client channel, dropping the topic when it was the
+// last one.
 func (b *Broker) unsubscribe(topic string, clientChan chan string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -123,6 +142,8 @@ func (b *Broker) unsubscribe(topic string, clientChan chan string) {
 	}
 }
 
+// publish formats a message as an SSE event with the next id and offers it to every
+// subscriber without waiting. It returns the id, or 0 when the message is too big.
 func (b *Broker) publish(topic string, message []byte) uint64 {
 	if int64(len(message)) > b.maxMsgSize {
 		log.Printf("Message size %d exceeds maximum allowed size %d", len(message), b.maxMsgSize)
@@ -173,6 +194,7 @@ func (b *Broker) publish(topic string, message []byte) uint64 {
 	return msgID
 }
 
+// ServeHTTP routes /infocenter/{topic}: GET subscribes, POST publishes.
 func (b *Broker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	pathParts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	if len(pathParts) < 2 || pathParts[0] != "infocenter" {
@@ -201,6 +223,8 @@ func (b *Broker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleSubscription streams a topic's events until the client leaves or stays quiet for
+// the timeout, which ends with a "timeout" event. Each message restarts the timer.
 func (b *Broker) handleSubscription(w http.ResponseWriter, r *http.Request, topic string) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -272,6 +296,8 @@ func (b *Broker) handleSubscription(w http.ResponseWriter, r *http.Request, topi
 	}
 }
 
+// handlePostMessage publishes the request body to the topic and answers 204 with no
+// body; an empty body is refused.
 func (b *Broker) handlePostMessage(w http.ResponseWriter, r *http.Request, topic string) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, b.maxMsgSize))
 	if err != nil {
@@ -298,6 +324,7 @@ func (b *Broker) handlePostMessage(w http.ResponseWriter, r *http.Request, topic
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// truncateMessage cuts a message for the logs.
 func truncateMessage(msg string) string {
 	if len(msg) <= maxLongLength {
 		return msg

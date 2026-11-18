@@ -1,3 +1,7 @@
+// broker_test.go
+// Tests the options, publishing and subscribing, the HTTP routes, concurrent use, the size
+// limits, Last-Event-ID and the retry field.
+
 package broker
 
 import (

@@ -1,3 +1,4 @@
+// Package utils holds the broker's settings and reads them from the environment.
 package utils
 
 import (
@@ -6,6 +7,7 @@ import (
 	"time"
 )
 
+// Config is the broker's limits and timings.
 type Config struct {
 	ClientTimeout       time.Duration
 	MessageBufferSize   int
@@ -14,6 +16,9 @@ type Config struct {
 	RetryInterval       time.Duration
 }
 
+// NewDefaultConfig is 30 seconds of quiet before disconnecting, 10 buffered messages per
+// client, topic names up to 100 characters, messages up to 1 MB, and a 3 second
+// reconnect hint.
 func NewDefaultConfig() *Config {
 	return &Config{
 		ClientTimeout:       30 * time.Second,
@@ -24,6 +29,8 @@ func NewDefaultConfig() *Config {
 	}
 }
 
+// NewConfigFromEnv starts from the defaults and overrides each value set in the
+// environment (CLIENT_TIMEOUT_IN_SECONDS and the others); bad values are ignored.
 func NewConfigFromEnv() *Config {
 	config := NewDefaultConfig()
 

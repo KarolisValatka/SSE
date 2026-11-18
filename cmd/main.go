@@ -1,3 +1,6 @@
+// Package main runs the server-sent events broker on port 8080: POST
+// /infocenter/{topic} publishes a message, GET /infocenter/{topic} streams the topic's
+// messages to the caller.
 package main
 
 import (
@@ -8,8 +11,10 @@ import (
 	"time"
 )
 
+// defaultClientTimeout is how long a quiet subscriber stays connected.
 const defaultClientTimeout = 30 * time.Second
 
+// main builds the broker with its options and serves it.
 func main() {
 
 	infoCenterBroker := broker.NewBrokerWithOptions(
